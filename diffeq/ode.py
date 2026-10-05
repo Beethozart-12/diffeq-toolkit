@@ -265,7 +265,14 @@ def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=10
     异常
     ----
     RuntimeError : 步长塌缩或超过最大步数（常见于刚性方程）时抛出。
+    ValueError : rtol/atol 非正或 first_step <= 0 时抛出（非法输入应尽早失败，
+        而非在迭代中触发误导性的"步长塌缩"）。
     """
+    if rtol <= 0 or atol <= 0:
+        raise ValueError("rtol 和 atol 必须为正数")
+    if first_step is not None and first_step <= 0:
+        raise ValueError("first_step 必须为正数")
+
     t0, tf = float(t_span[0]), float(t_span[1])
     y = _as_vector(y0)
     was_scalar = np.asarray(y0).ndim == 0

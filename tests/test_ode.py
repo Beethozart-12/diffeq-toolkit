@@ -144,3 +144,50 @@ class TestDenseOutput:
         # 谐振子在 t=pi/2 处 x = cos(pi/2)=0, v = -sin(pi/2)=-1
         assert abs(y_mid[0] - 0.0) < 1e-4
         assert abs(y_mid[1] - (-1.0)) < 1e-4
+
+
+class TestInputValidation:
+    """入口参数合法性校验（复审 #3）：非法输入应尽早抛 ValueError，
+    而非在迭代中触发误导性的 RuntimeError('步长塌缩')。"""
+
+    def test_first_step_zero_raises(self):
+        with pytest.raises(ValueError, match="first_step 必须为正数"):
+            solve_ivp(lambda t, y: -y, 1.0, (0.0, 1.0), first_step=0)
+
+    def test_first_step_negative_raises(self):
+        with pytest.raises(ValueError, match="first_step 必须为正数"):
+            solve_ivp(lambda t, y: -y, 1.0, (0.0, 1.0), first_step=-0.1)
+
+    def test_atol_non_positive_raises(self):
+        with pytest.raises(ValueError, match="rtol 和 atol 必须为正数"):
+            solve_ivp(lambda t, y: -y, 1.0, (0.0, 1.0), atol=0.0)
+
+    def test_rtol_non_positive_raises(self):
+        with pytest.raises(ValueError, match="rtol 和 atol 必须为正数"):
+            solve_ivp(lambda t, y: -y, 1.0, (0.0, 1.0), rtol=0.0)
+
+    def test_valid_first_step_still_solves(self):
+        # 合法 first_step 不应被误伤
+        t, y = solve_ivp(lambda t, y: -y, 1.0, (0.0, 1.0), first_step=0.1)
+        assert abs(t[-1] - 1.0) < 1e-12
+
+
+class TestConvergenceOrdersZeroError:
+    """收敛阶估计对零误差的防护（复审 #4）：RK4 对线性问题 y'=1 给出精确解，
+    端点误差恒为 0，必须显式报错而非返回 -inf/+inf。"""
+
+    def test_zero_error_raises(self):
+        # 平凡问题 y'=0, y(0)=0 的数值解恒为精确 0.0，端点误差恰为 0.0，
+        # 触发零误差防护（与复审 #4 描述一致：RK4 解低阶多项式得精确解）。
+        f = lambda t, y: 0.0
+        y0 = 0.0
+        y_exact = lambda t: 0.0
+        with pytest.raises(ValueError, match="终点误差为 0"):
+            convergence_orders(f, y0, (0.0, 1.0), "rk4", y_exact, [10, 20])
+
+    def test_normal_case_still_works(self):
+        # 非线性问题仍有非零误差，原逻辑不受影响
+        orders = convergence_orders(f_decay, 2.0, (0.0, 4.0), "rk4",
+                                    exact_decay, [50, 100, 200])
+        assert len(orders) == 2
+        assert all(o > 3.0 for o in orders)

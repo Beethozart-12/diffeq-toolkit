@@ -55,10 +55,14 @@ def convergence_orders(f, y0, t_span, method, y_exact, n_steps_list):
         raise ValueError("n_steps_list 至少需要两个元素")
 
     errors = [endpoint_error(f, y0, t_span, method, n, y_exact) for n in n_steps_list]
-    orders = [
-        float(np.log(e1 / e2) / np.log(n2 / n1))
-        for e1, e2, n1, n2 in zip(
-            errors[:-1], errors[1:], n_steps_list[:-1], n_steps_list[1:]
-        )
-    ]
+    orders = []
+    for e1, e2, n1, n2 in zip(
+        errors[:-1], errors[1:], n_steps_list[:-1], n_steps_list[1:]
+    ):
+        if e1 <= 0 or e2 <= 0:
+            raise ValueError(
+                f"终点误差为 0（e1={e1}, e2={e2}），无法估计收敛阶；"
+                "请选用更精细的参考解或更小的步长范围"
+            )
+        orders.append(float(np.log(e1 / e2) / np.log(n2 / n1)))
     return orders
