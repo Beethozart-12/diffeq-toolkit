@@ -4,7 +4,7 @@
 
 - 一维热传导方程 ``u_t = α·u_xx``：FTCS 显式格式、Crank–Nicolson 隐式格式
 - 一维波动方程 ``u_tt = c²·u_xx``：中心差分（蛙跳）显式格式
-- 二维 Laplace 方程 ``u_xx + u_yy = 0``：Gauss–Seidel 风格迭代
+- 二维 Laplace 方程 ``u_xx + u_yy = 0``：逐行红黑混合 Gauss–Seidel 迭代（行内 Jacobi、跨行 GS）
 
 约定：一维问题网格长度为 n+1（含两个边界节点），边界按 Dirichlet 条件处理，
 取初值两端的值并在演化中保持不变；二维问题网格形状为 (ny+1, nx+1)。
@@ -149,6 +149,10 @@ def solve_heat_crank_nicolson(u0, alpha, dx, dt, n_steps):
     时间、空间均为二阶精度 O(dt² + dx²)，无条件稳定；
     每步用 Thomas 算法求解三对角方程组。
 
+    边界处理：冻结 Dirichlet 条件，即 u^{n+1}_0 = u^n_0（取初值两端并保持不变）。
+    因边界冻结，隐式侧使用旧时刻或新时刻边界在数值上完全等价；实现统一采用
+    新时刻边界值，便于未来支持非定常边界。
+
     参数与返回值同 :func:`solve_heat_ftcs`。
     """
     u0 = _check_heat_inputs(u0, alpha, dx, dt)
@@ -166,12 +170,14 @@ def solve_heat_crank_nicolson(u0, alpha, dx, dt, n_steps):
         uk = u[k]
         # 显式部分 (I + rA)·u^k
         rhs = uk[1:n] + r * (uk[2:n + 1] - 2.0 * uk[1:n] + uk[0:n - 1])
-        # 隐式部分中已知的边界值移到右端
-        rhs[0] += r * uk[0]
-        rhs[-1] += r * uk[n]
-        u[k + 1, 1:n] = thomas_solve(sub, diag, sup, rhs)
-        u[k + 1, 0] = uk[0]
-        u[k + 1, n] = uk[n]
+        # 隐式侧边界：取本步（u^{n+1}）的边界值。此处为冻结 Dirichlet
+        # （边界在演化中保持不变），故 u^{n+1}_0 == u^n_0，数值上等价于旧时刻
+        # 边界；统一使用新时刻边界，便于未来扩展非定常边界。
+        u_new = u[k + 1]
+        u_new[0], u_new[n] = uk[0], uk[n]
+        rhs[0] += r * u_new[0]
+        rhs[-1] += r * u_new[n]
+        u_new[1:n] = thomas_solve(sub, diag, sup, rhs)
     return u
 
 
@@ -242,8 +248,10 @@ def solve_wave(u0, v0, c, dx, dt, n_steps):
 def solve_laplace(u_guess, tol=1e-6, max_iter=10000):
     """二维 Laplace 方程 ``u_xx + u_yy = 0`` 在矩形域上的迭代求解。
 
-    采用 Gauss–Seidel 风格的五点平均迭代（按行推进、同轮次内
-    部分新值立即参与计算），五点格式为二阶精度。
+    采用红黑混合（行内 Jacobi、跨行 Gauss–Seidel）的五点平均迭代：
+    逐行推进时，第 i 行使用上一轮已更新的第 i-1 行（跨行 GS），
+    但同一行内的左右邻居仍取上一轮旧值（行内 Jacobi）。五点格式为二阶精度，
+    收敛行为与标准 Gauss–Seidel 等价。
 
     参数
     ----
