@@ -16,6 +16,7 @@ __all__ = [
     "rk4_step",
     "solve_ode",
     "solve_ivp",
+    "OdeResult",
 ]
 
 
@@ -108,6 +109,73 @@ def solve_ode(f, y0, t_span, n_steps=200, method="rk4"):
 # 自适应 Dormand–Prince RK45（5(4) 嵌入对）
 # ----------------------------------------------------------------------
 
+
+class _DenseOutput:
+    """对自适应步点做分段三次 Hermite（C¹）插值，支持在 ``[t0, tf]`` 任意位置求值。
+
+    每段 ``[t_k, t_{k+1}]`` 之间用三次 Hermite 插值，已知端点函数值
+    ``y_k, y_{k+1}`` 与端点导数 ``f(t_k, y_k), f(t_{k+1}, y_{k+1})``，
+    所得插值函数在步点上 C¹ 连续、与自适应解的局部精度一致。
+    """
+
+    def __init__(self, t, y, f, squeeze=False):
+        self.t = np.asarray(t, dtype=float)        # (n,)
+        self.y = np.asarray(y, dtype=float)        # (n, m)
+        self.f = np.asarray(f, dtype=float)        # (n, m)
+        self.squeeze = squeeze                     # 标量问题下把末维 (m=1) 压平
+
+    def __call__(self, t_eval):
+        t_eval = np.asarray(t_eval, dtype=float)
+        scalar_in = t_eval.ndim == 0
+        te = np.atleast_1d(t_eval)
+
+        idx = np.searchsorted(self.t, te, side="right") - 1
+        idx = np.clip(idx, 0, self.t.size - 2)
+        t0 = self.t[idx]
+        t1 = self.t[idx + 1]
+        dt = t1 - t0
+        dt = np.where(dt == 0.0, 1.0, dt)          # 单点/重复步长防御
+        z = (te - t0) / dt
+
+        y0 = self.y[idx]
+        y1 = self.y[idx + 1]
+        f0 = self.f[idx]
+        f1 = self.f[idx + 1]
+
+        h00 = 2.0 * z**3 - 3.0 * z**2 + 1.0
+        h10 = z**3 - 2.0 * z**2 + z
+        h01 = -2.0 * z**3 + 3.0 * z**2
+        h11 = z**3 - z**2
+
+        out = (h00[:, None] * y0
+               + h10[:, None] * (dt[:, None] * f0)
+               + h01[:, None] * y1
+               + h11[:, None] * (dt[:, None] * f1))
+
+        if self.squeeze:
+            out = out[:, 0]
+        return out[0] if scalar_in else out
+
+
+class OdeResult:
+    """自适应求解结果容器。
+
+    ``dense_output=False`` 时：可直接解包为 ``t, y``，与旧版本返回完全一致。
+    ``dense_output=True`` 时：除 ``t``、``y`` 外，额外提供 ``.sol`` 插值器，
+    可在 ``[t0, tf]`` 内任意位置求值，例如 ``y_mid = res.sol(0.5)``。
+    """
+
+    def __init__(self, t, y, sol=None):
+        self.t = t
+        self.y = y
+        self.sol = sol
+
+    def __iter__(self):
+        return iter((self.t, self.y))
+
+    def __getitem__(self, idx):
+        return (self.t, self.y)[idx]
+
 _C = np.array([0.0, 1 / 5, 3 / 10, 4 / 5, 8 / 9, 1.0, 1.0])
 _A = [
     [],
@@ -159,7 +227,8 @@ def _initial_step(f, t0, y, span, rtol, atol):
     return min(100.0 * h0, h1, abs(span))
 
 
-def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=100000):
+def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=100000,
+              dense_output=False):
     """自适应 Dormand–Prince 5(4)（RK45）求解初值问题（类似 MATLAB ode45）。
 
     每步计算五阶解与嵌入四阶解之差作为局部误差估计，
@@ -182,12 +251,16 @@ def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=10
         初始步长；缺省时自动估计。
     max_steps : int
         最大步数，防止死循环。
+    dense_output : bool, 可选
+        为 ``True`` 时返回一个 :class:`OdeResult` 对象（仍可解包为 ``t, y``），
+        其 ``.sol`` 属性为分段三次 Hermite 插值器，可在 ``[t0, tf]`` 内任意位置
+        求值；为 ``False``（默认）时返回与旧版一致的 ``(t, y)`` 元组。
 
     返回
     ----
-    t : ndarray, shape (n,)
-    y : ndarray
-        标量问题 shape ``(n,)``；方程组 shape ``(n, m)``。
+    - ``dense_output=False``：``t, y`` 元组，``t`` shape ``(n,)``，
+      标量问题 ``y`` shape ``(n,)``、方程组 shape ``(n, m)``。
+    - ``dense_output=True``：:class:`OdeResult`，含 ``.t``、``.y``、``.sol``。
 
     异常
     ----
@@ -204,6 +277,7 @@ def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=10
 
     ts = [t0]
     ys = [y.copy()]
+    fs = [np.asarray(f(t0, y), dtype=float)]   # 各接受步处的导数 f(t, y)，供密集输出
     t = t0
 
     for _ in range(int(max_steps)):
@@ -224,6 +298,7 @@ def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=10
             y = y_new
             ts.append(t)
             ys.append(y.copy())
+            fs.append(np.asarray(f(t, y), dtype=float))
             factor = 5.0 if err == 0.0 else 0.9 * err ** (-0.2)
             h *= min(5.0, max(0.2, factor))
         else:           # 拒绝并缩步
@@ -237,5 +312,10 @@ def solve_ivp(f, y0, t_span, rtol=1e-6, atol=1e-9, first_step=None, max_steps=10
         raise RuntimeError(f"达到最大步数 {max_steps} 仍未到达终点，请放宽容差")
 
     t_arr = np.asarray(ts)
-    y_arr = np.asarray(ys)
-    return t_arr, (y_arr[:, 0] if was_scalar else y_arr)
+    y_full = np.asarray(ys)                       # (n, m)，始终保留向量形态
+    y_out = y_full[:, 0] if was_scalar else y_full
+
+    if dense_output:
+        sol = _DenseOutput(t_arr, y_full, np.asarray(fs), squeeze=was_scalar)
+        return OdeResult(t_arr, y_out, sol)
+    return t_arr, y_out

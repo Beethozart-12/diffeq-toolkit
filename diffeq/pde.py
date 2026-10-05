@@ -4,7 +4,7 @@
 
 - 一维热传导方程 ``u_t = α·u_xx``：FTCS 显式格式、Crank–Nicolson 隐式格式
 - 一维波动方程 ``u_tt = c²·u_xx``：中心差分（蛙跳）显式格式
-- 二维 Laplace 方程 ``u_xx + u_yy = 0``：逐行红黑混合 Gauss–Seidel 迭代（行内 Jacobi、跨行 GS）
+- 二维 Laplace 方程 ``u_xx + u_yy = 0``：逐点（自然顺序）Gauss–Seidel 迭代（每次更新立即用于后续邻居）
 
 约定：一维问题网格长度为 n+1（含两个边界节点），边界按 Dirichlet 条件处理，
 取初值两端的值并在演化中保持不变；二维问题网格形状为 (ny+1, nx+1)。
@@ -248,10 +248,11 @@ def solve_wave(u0, v0, c, dx, dt, n_steps):
 def solve_laplace(u_guess, tol=1e-6, max_iter=10000):
     """二维 Laplace 方程 ``u_xx + u_yy = 0`` 在矩形域上的迭代求解。
 
-    采用红黑混合（行内 Jacobi、跨行 Gauss–Seidel）的五点平均迭代：
-    逐行推进时，第 i 行使用上一轮已更新的第 i-1 行（跨行 GS），
-    但同一行内的左右邻居仍取上一轮旧值（行内 Jacobi）。五点格式为二阶精度，
-    收敛行为与标准 Gauss–Seidel 等价。
+    采用逐点（自然顺序 lexicographic）Gauss–Seidel 迭代：按 i=1..ny-1、j=1..nx-1 的
+    顺序逐个更新内部节点，更新后立即用新值参与后续邻居的计算（即 u[i, j-1] 与
+    u[i-1, j] 均为本轮已更新的新值）。这是标准 Gauss–Seidel 的严格实现，收敛速度通常
+    快于 Jacobi；代价是内层为逐点 Python 循环、较向量化 Jacobi 慢，属「教学清晰性优先」
+    的取舍。五点格式为二阶精度。
 
     参数
     ----
@@ -281,11 +282,15 @@ def solve_laplace(u_guess, tol=1e-6, max_iter=10000):
     ny, nx = u.shape[0] - 1, u.shape[1] - 1
     for it in range(1, max_iter + 1):
         diff = 0.0
+        # 逐点（自然顺序）Gauss–Seidel：u[i, j-1] 与 u[i-1, j] 已被本轮更新为新值
         for i in range(1, ny):
-            new_vals = 0.25 * (u[i - 1, 1:nx] + u[i + 1, 1:nx]
-                               + u[i, 0:nx - 1] + u[i, 2:nx + 1])
-            diff = max(diff, float(np.max(np.abs(new_vals - u[i, 1:nx]))))
-            u[i, 1:nx] = new_vals
+            for j in range(1, nx):
+                new_val = 0.25 * (u[i - 1, j] + u[i + 1, j]
+                                   + u[i, j - 1] + u[i, j + 1])
+                delta = abs(new_val - u[i, j])
+                if delta > diff:
+                    diff = delta
+                u[i, j] = new_val
         if diff < tol:
             return u, it
     return u, max_iter

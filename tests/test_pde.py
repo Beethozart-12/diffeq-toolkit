@@ -112,3 +112,19 @@ class TestLaplace:
     def test_too_small_grid_raises(self):
         with pytest.raises(ValueError):
             solve_laplace(np.zeros((2, 2)))
+
+    def test_quadratic_exact_solution(self):
+        # 精确解 u = x² - y² 满足 Laplace 方程；五点离散对二次函数精确，
+        # 逐点 Gauss–Seidel 应（在数值精度内）一步即还原精确解。
+        n = 20
+        x = np.linspace(0.0, 1.0, n + 1)
+        X, Y = np.meshgrid(x, x)
+        guess = np.zeros((n + 1, n + 1))
+        guess[0, :] = X[0, :]**2 - Y[0, :]**2
+        guess[-1, :] = X[-1, :]**2 - Y[-1, :]**2
+        guess[:, 0] = X[:, 0]**2 - Y[:, 0]**2
+        guess[:, -1] = X[:, -1]**2 - Y[:, -1]**2
+
+        u, n_iter = solve_laplace(guess, tol=1e-10, max_iter=50000)
+        assert n_iter < 50000
+        assert np.max(np.abs(u - (X**2 - Y**2))) < 1e-8
