@@ -4,7 +4,6 @@
 > 覆盖**常微分方程（ODE）初值问题**与**三类典型偏微分方程（PDE）**，
 > 自带收敛阶验证、完整单元测试与示例画廊，适合教学、原型验证与课程设计。
 
-[![CI](https://github.com/Beethozart-12/diffeq-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Beethozart-12/diffeq-toolkit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 
@@ -42,6 +41,10 @@
 git clone https://github.com/Beethozart-12/diffeq-toolkit.git
 cd diffeq-toolkit
 
+# 仓库采用 flat layout：克隆后直接从根目录运行脚本即可 import diffeq，无需安装
+python examples/ode_decay.py
+
+# 推荐：安装为 editable，全局可用并解锁 pytest
 pip install -e .            # 常规使用
 pip install -e ".[dev]"     # 开发模式（含 pytest）
 ```
@@ -98,15 +101,15 @@ u = solve_heat_crank_nicolson(
 
 ```
 diffeq-toolkit/
-├── src/diffeq/
+├── diffeq/              # 包根目录（flat layout，克隆后即可 import）
 │   ├── ode.py           # Euler / Heun / RK4 / 自适应 RK45（Dormand–Prince）
 │   ├── pde.py           # 热传导 / 波动 / Laplace + Thomas 算法
 │   ├── diagnostics.py   # 端点误差、观测收敛阶估计
 │   └── plotting.py      # 可视化辅助（自动中文字体）
 ├── examples/            # 6 个可独立运行的示例
 ├── tests/               # pytest 单元测试
+├── conftest.py          # 强制 matplotlib Agg 后端，保证无头/CI 环境测试稳定
 ├── docs/images/         # 示例生成的图片（README 画廊）
-├── .github/workflows/ci.yml   # GitHub Actions：3.9–3.12 全版本测试
 ├── pyproject.toml
 └── LICENSE
 ```
@@ -126,25 +129,21 @@ pytest            # 或 pytest -v 查看明细
 - **线性代数**：Thomas 算法与 `numpy.linalg.solve` 交叉验证
 - **绘图冒烟测试**：无头环境下各绘图函数正常返回 `(fig, ax)`
 
-## 🚢 发布到你自己的 GitHub
+## 🛠 开发说明
 
-1. 在 GitHub 上新建一个**空仓库**（不要初始化 README）。
-2. 替换占位信息：
-   - `README.md` 与徽章中的 `Beethozart-12`
-   - `LICENSE` 与 `pyproject.toml` 中的作者名
-3. 本仓库已含初始提交，直接关联远程并推送：
+- 包目录 `diffeq/` 位于仓库根目录（flat layout），因此**克隆后不用安装**就能从仓库根目录运行脚本：
 
-   ```bash
-   git remote add origin https://github.com/Beethozart-12/diffeq-toolkit.git
-   git push -u origin main
-   ```
+  ```bash
+  python 你的脚本.py      # 脚本里 from diffeq.ode import ... 可直接解析
+  ```
 
-推送后 GitHub Actions 会自动在 Python 3.9–3.12 上运行全部测试。
+- 推荐在虚拟环境中 `pip install -e .`，这样任意子目录都能 `import diffeq`，并可使用 `pytest` 跑测试。
+- `conftest.py` 会在测试收集前强制 matplotlib 使用 Agg 后端，无需图形界面（DISPLAY）即可运行全部测试。
+- 可选 CI：如需在 GitHub Actions 上自动测试，请在 `.github/workflows/ci.yml` 添加 workflow（注意：推送 workflow 文件需要具有 `workflow` 权限的 Personal Access Token）。
 
 ## 🤝 贡献
 
-欢迎 Issue 与 PR！新增求解器建议：在 `src/diffeq/` 中实现、在 `tests/` 中
-验证精度与收敛阶、在 `examples/` 中给出可复现示例。
+欢迎 Issue 与 PR！新增求解器建议：在 `diffeq/` 中实现、在 `tests/` 中验证精度与收敛阶、在 `examples/` 中给出可复现示例。
 
 ## 📄 许可证
 

@@ -9,7 +9,7 @@ description = "常微分方程（ODE）与偏微分方程（PDE）数值求解�
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
-authors = [{ name = "Your Name" }]
+authors = [{ name = "Beethozart-12" }]
 keywords = [
     "differential-equations",
     "ode",
@@ -39,9 +39,9 @@ dependencies = [
 dev = ["pytest>=7.0"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["."]
 addopts = "-q"
