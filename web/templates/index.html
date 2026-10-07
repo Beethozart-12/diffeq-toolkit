@@ -84,8 +84,15 @@
 
     <!-- PDE 面板 -->
     <section id="panel-pde" class="panel hidden" role="tabpanel" aria-labelledby="tab-pde">
+      <label class="field">
+        <span>方程（LaTeX，可选 · 支持 ∇² / Δ 记号 · 填写后自动识别类型与系数）</span>
+        <textarea id="pde-eq" rows="2" spellcheck="false"
+          placeholder="\frac{\partial u}{\partial t} = \alpha \nabla^2 u"></textarea>
+      </label>
+      <div class="preview" id="pde-eq-preview" aria-hidden="true"></div>
+
       <div class="row">
-        <label class="field small"><span>方程类型</span>
+        <label class="field small"><span>方程类型<span class="subnote">（方程留空时生效）</span></span>
           <select id="pde-type">
             <option value="heat" selected>热传导 u_t = α·Δu</option>
             <option value="wave">波动 u_tt = c²·Δu</option>

@@ -99,6 +99,7 @@ main { max-width: 820px; margin: 0 auto; padding: 20px 28px 60px; }
 .run:disabled { opacity: 0.6; cursor: wait; }
 
 .status { color: var(--muted); font-size: 13px; min-height: 1em; }
+.subnote { color: var(--muted); font-weight: normal; }
 
 .result { margin-top: 18px; }
 .result .python-src {

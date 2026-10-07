@@ -19,6 +19,7 @@ Python 可执行的代码（sympy -> lambdify），再交给 diffeq 求解/计�
 import os
 import sys
 import json
+import re
 import argparse
 import io
 import base64
@@ -262,6 +263,10 @@ def _latex_field(latex, var_names, grids, what):
     expr, syms = latex_to_python(latex)
     unknown = sorted(syms - set(var_names))
     if unknown:
+        if "nabla" in unknown or "Delta" in unknown:
+            raise ValueError(
+                f"{what}不支持 ∇ 算子：\\nabla / \\Delta 只能出现在「方程」输入框中"
+            )
         raise ValueError(f"{what}中出现了未知符号 {unknown}（可用变量：{var_names}）")
     if "e" not in var_names:
         expr = expr.subs(sp.Symbol("e"), sp.E)
@@ -270,6 +275,81 @@ def _latex_field(latex, var_names, grids, what):
     if arr.shape != grids[0].shape:
         arr = np.broadcast_to(arr, grids[0].shape).astype(float)
     return arr
+
+
+# --------------------------------------------------------------------------- #
+# 方程识别：支持 ∇² / Δ 记号的热传导 / 波动 / Laplace
+# --------------------------------------------------------------------------- #
+_RE_LAPLACIAN = re.compile(r"\\nabla\s*\^?\s*\{?\s*2|\\Delta(?![a-zA-Z])")
+_RE_BARE_NABLA = re.compile(r"\\nabla")
+_RE_WAVE_ORDER = re.compile(r"\\partial\s*\^\s*\{?\s*2|u_\{?\s*t\s*t|u''")
+_RE_HEAT_ORDER = re.compile(
+    r"\\frac\s*\{\s*\\partial\s*\w+\s*\}\s*\{\s*\\partial\s*t\s*\}"
+    r"|u_\{?\s*t\s*\}?(?![a-zA-Z])"
+)
+
+
+def _split_equation(s):
+    parts = s.split("=")
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise ValueError(
+            r"方程需要恰好一个等号，例如 \frac{\partial u}{\partial t} = \alpha \nabla^2 u"
+        )
+    return parts[0].strip(), parts[1].strip()
+
+
+def _has_laplacian(s):
+    return bool(_RE_LAPLACIAN.search(s))
+
+
+def _parse_pde_equation(eq):
+    """从 LaTeX 方程识别类型与系数（支持 \nabla^2、\Delta、u_t、u_{tt} 记号）。
+
+    返回 (ptype, coeff, info)：coeff 为数值时直接采用（heat=α，wave=c）；
+    为 None 时（方程里写的是 \alpha、c 等符号）回退到系数输入框。
+
+    说明：sympy 的 parse_latex 会把 \nabla 当普通符号、把 \partial^2 的二阶
+    导数解析成乱码，故这里基于 LaTeX 原文做正则识别，仅对系数部分做
+    sympy 解析。
+    """
+    s = re.sub(r"\\left|\\right", "", eq.strip())
+    if not _has_laplacian(s):
+        if _RE_BARE_NABLA.search(s):
+            raise ValueError(
+                r"检测到梯度算子 \nabla：请用二阶算子 \nabla^2（或 \Delta）表示 Laplacian"
+            )
+        raise ValueError(r"方程中未识别到 Laplacian（\nabla^2 或 \Delta）")
+
+    is_wave = bool(_RE_WAVE_ORDER.search(s))
+    is_heat = (not is_wave) and bool(_RE_HEAT_ORDER.search(s))
+
+    lhs, rhs = _split_equation(s)
+    if _has_laplacian(lhs) and _has_laplacian(rhs):
+        raise ValueError("方程两侧都出现了 Laplacian，无法识别")
+    lap_side = lhs if _has_laplacian(lhs) else rhs
+    other = rhs if lap_side is lhs else lhs
+
+    # 提取系数：去掉 Laplacian 算子与依变量 u 后解析剩余部分
+    coeff_raw = _RE_LAPLACIAN.sub("", lap_side)
+    coeff_raw = re.sub(r"(?<![a-zA-Z\\])u(?![a-zA-Z])", "", coeff_raw).strip() or "1"
+    expr, syms = latex_to_python(coeff_raw)
+    coeff = float(expr) if not syms else None
+
+    if is_wave:
+        c = None if coeff is None else coeff ** 0.5
+        info = "已从方程识别：波动方程" + (
+            f"，c = {c:.4g}" if c is not None else "，c 取自下方输入框")
+        return "wave", c, info
+    if is_heat:
+        info = "已从方程识别：热传导方程" + (
+            f"，α = {coeff:.4g}" if coeff is not None else "，α 取自下方输入框")
+        return "heat", coeff, info
+
+    # 无时间导数 -> Laplace；另一侧必须为 0（泊松方程暂不支持）
+    other_expr, other_syms = latex_to_python(other or "0")
+    if other_syms or float(other_expr) != 0.0:
+        raise ValueError("暂不支持泊松方程（Δu = 非零右端项），右端请填 0")
+    return "laplace", None, "已从方程识别：Laplace 方程"
 
 
 def _pde_boundary_mask(shape):
@@ -319,15 +399,26 @@ def _pde_plot(snaps, labels, dims, L, var_names, ptype):
 
 def api_pde(payload: dict) -> dict:
     """PDE 求解：类型/维数/LaTeX 初值与边界 -> n 维求解器 -> 快照图。"""
-    ptype = payload.get("type")
-    if ptype not in ("heat", "wave", "laplace"):
-        return {"ok": False, "error": "未知方程类型（heat / wave / laplace）"}
     try:
         dims = int(payload.get("dims", 2))
     except (TypeError, ValueError):
         return {"ok": False, "error": "维数必须是整数"}
     if dims not in (1, 2, 3):
         return {"ok": False, "error": "空间维数仅支持 1 / 2 / 3"}
+
+    # 方程输入框（可选）：识别 ∇²/Δ 记号，自动覆盖类型与系数
+    eq_raw = (payload.get("eq") or "").strip()
+    eq_coeff = None
+    eq_info = None
+    if eq_raw:
+        try:
+            ptype, eq_coeff, eq_info = _parse_pde_equation(eq_raw)
+        except ValueError as e:
+            return {"ok": False, "error": f"方程识别失败：{e}"}
+    else:
+        ptype = payload.get("type")
+        if ptype not in ("heat", "wave", "laplace"):
+            return {"ok": False, "error": "未知方程类型（heat / wave / laplace）"}
     if ptype == "laplace" and dims < 2:
         return {"ok": False, "error": "Laplace 方程至少需要 2 个空间维数"}
 
@@ -355,7 +446,10 @@ def api_pde(payload: dict) -> dict:
 
     try:
         if ptype == "heat":
-            alpha = _pde_num(payload, "coeff", 1.0, lo=1e-12, what="α 热扩散系数")
+            if eq_raw and eq_coeff is not None:
+                alpha = eq_coeff
+            else:
+                alpha = _pde_num(payload, "coeff", 1.0, lo=1e-12, what="α 热扩散系数")
             dt = _pde_num(payload, "dt", 0.25 * dx * dx / dims, lo=1e-12)
             steps = int(_pde_num(payload, "steps", 500, lo=0))
             if steps > PDE_STEP_CAPS[dims]:
@@ -372,7 +466,10 @@ def api_pde(payload: dict) -> dict:
             python_src = "u0 = " + sp.printing.lambdarepr.lambdarepr(
                 _latex_expr(payload.get("latex", "0"), var_names))
         elif ptype == "wave":
-            c = _pde_num(payload, "coeff", 1.0, lo=1e-12, what="c 波速")
+            if eq_raw and eq_coeff is not None:
+                c = eq_coeff
+            else:
+                c = _pde_num(payload, "coeff", 1.0, lo=1e-12, what="c 波速")
             dt = _pde_num(payload, "dt", 0.8 / (c * np.sqrt(dims) / dx), lo=1e-12)
             steps = int(_pde_num(payload, "steps", 300, lo=0))
             if steps > PDE_STEP_CAPS[dims]:
@@ -410,6 +507,9 @@ def api_pde(payload: dict) -> dict:
         plot = _pde_plot(np.asarray(snaps), labels, dims, L, var_names, ptype)
     except Exception as e:
         return {"ok": False, "error": f"绘图失败：{e}"}
+
+    if eq_info:
+        meta = eq_info + " · " + meta
 
     return {
         "ok": True,

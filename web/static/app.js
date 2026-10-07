@@ -223,6 +223,7 @@
   // ------------------------------------------------------------------ //
   const pdeType = $("pde-type");
   const pdeDims = $("pde-dims");
+  const pdeEq = $("pde-eq");
   const pdeLatex = $("pde-latex");
   const pdeBc = $("pde-bc");
   const pdeIcLabel = $("pde-ic-label");
@@ -271,6 +272,7 @@
       result: pdeResult,
       url: "/api/pde",
       payload: {
+        eq: pdeEq.value,
         type: pdeType.value,
         dims: Number(pdeDims.value),
         latex: pdeLatex.value,
@@ -301,8 +303,11 @@
   });
 
   // 初始化预览（MathJax 未就绪时由 typeset 内部轮询补齐）
+  pdeEq.dataset.preview = "pde-eq-preview";
+  pdeEq.addEventListener("input", debounce(() => refreshPreview(pdeEq), 120));
   pdeLatex.dataset.preview = "pde-preview";
   syncPdeForm();
   refreshPreview(odeLatex);
   refreshPreview(evalLatex);
+  refreshPreview(pdeEq);
 })();
