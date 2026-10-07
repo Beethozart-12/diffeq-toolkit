@@ -37,6 +37,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# 网页公式求解界面（web/app.py）所需的依赖。
+# 注意：sympy 的 LaTeX 解析依赖 antlr4-python3-runtime，且 sympy 1.12+ 仅接受 4.11.x
+# （其版本检查为 startswith('4.11')，生成代码里写死 checkVersion("4.11.1")），
+# 故此处显式钉死 4.11.1，否则会报 "requires antlr4 ... version 4.11"。
+web = ["sympy>=1.13", "antlr4-python3-runtime==4.11.1"]
 
 [tool.setuptools.packages.find]
 where = ["."]

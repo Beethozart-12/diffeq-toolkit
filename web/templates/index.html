@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>diffeq-toolkit · LaTeX 公式求解</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- MathJax 用于 LaTeX 实时预览 -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>diffeq-toolkit</h1>
+    <p class="sub">在网页输入 <b>LaTeX 公式</b>，运行时自动转换为 Python 可执行代码并求解</p>
+  </header>
+
+  <main>
+    <div class="tabs">
+      <button class="tab active" data-tab="ode">常微分方程（ODE）</button>
+      <button class="tab" data-tab="eval">表达式求值 / 绘图</button>
+    </div>
+
+    <!-- ODE 面板 -->
+    <section id="panel-ode" class="panel">
+      <label class="field">
+        <span>微分方程（LaTeX）</span>
+        <textarea id="ode-latex" rows="2">\frac{dy}{dt} = -2y</textarea>
+      </label>
+      <div class="preview" id="ode-preview">\( \frac{dy}{dt} = -2y \)</div>
+
+      <div class="row">
+        <label class="field small"><span>初值 y₀</span><input id="ode-y0" type="number" value="1" step="any" /></label>
+        <label class="field small"><span>t 初值</span><input id="ode-t0" type="number" value="0" step="any" /></label>
+        <label class="field small"><span>t 终值</span><input id="ode-tf" type="number" value="2" step="any" /></label>
+      </div>
+
+      <button id="ode-run" class="run">求解</button>
+      <div id="ode-result" class="result"></div>
+    </section>
+
+    <!-- 表达式面板 -->
+    <section id="panel-eval" class="panel hidden">
+      <label class="field">
+        <span>表达式（LaTeX）</span>
+        <textarea id="eval-latex" rows="2">\sin(x) + x^2</textarea>
+      </label>
+      <div class="preview" id="eval-preview">\( \sin(x) + x^2 \)</div>
+
+      <div class="row">
+        <label class="field small"><span>自变量</span><input id="eval-var" type="text" value="x" /></label>
+        <label class="field small"><span>区间 a</span><input id="eval-a" type="number" value="-5" step="any" /></label>
+        <label class="field small"><span>区间 b</span><input id="eval-b" type="number" value="5" step="any" /></label>
+      </div>
+
+      <button id="eval-run" class="run">计算</button>
+      <div id="eval-result" class="result"></div>
+    </section>
+
+    <p class="hint">
+      解析由 <code>sympy.parse_latex</code> 完成，再经 <code>sympy.lambdify</code> 生成 Python 函数，
+      最后交给 <code>diffeq.ode.solve_ivp</code>（或 NumPy）计算。下方会显示「Python 读得懂的方式」。
+    </p>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

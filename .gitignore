@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+
+# 网页公式求解界面：matplotlib 在无头环境下生成的配置缓存
+web/.mplconfig/
+
+# 运行日志
+*.log

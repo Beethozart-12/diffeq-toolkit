@@ -51,6 +51,37 @@ pip install -e ".[dev]"     # 开发模式（含 pytest）
 
 依赖：Python ≥ 3.9、`numpy`、`matplotlib`。
 
+## 🌐 Web 公式求解界面（LaTeX → Python 自动运算）
+
+`web/app.py` 提供一个**纯标准库**（仅额外需要 `sympy` + `antlr4`）的本地网页服务：
+你在网页里输入 **LaTeX 公式**，服务器在运行时自动把它「翻译」成 Python 能直接执行的
+数值函数并运算，前端会**同时回显生成的 Python 源码**，直观体现「运行时自动用 python
+读得懂的方式运算」。
+
+- **ODE 标签页**：输入形如 `\frac{dy}{dt} = -2y` 的一阶常微分方程，自动解析、`lambdify`
+  为 `lambda t, y: -2*y`，交给 `diffeq.ode.solve_ivp` 求解并画数值解曲线。
+- **表达式求值标签页**：输入任意 LaTeX 表达式（如 `\sin(x) + x^2` 或 `e^{-x^2}`），
+  自动在指定区间上求值并绘图（`e` 会被识别为自然常数 Euler 数）。
+
+### 启动
+
+```bash
+# 安装网页界面依赖（sympy + antlr4 4.11.1，已钉死）
+pip install -e ".[web]"
+
+# 在仓库根目录启动（默认 127.0.0.1:8000）
+python web/app.py
+# 或指定端口
+python web/app.py --port 8000 --host 127.0.0.1
+```
+
+然后在浏览器打开 <http://127.0.0.1:8000/> 即可。
+
+> 说明：解析链路为 `sympy.parsing.latex.parse_latex`（LaTeX → sympy 表达式）
+> → `sympy.lambdify(..., modules="numpy")`（sympy 表达式 → 数值函数）。
+> 因 sympy 1.12+ 的 LaTeX 解析器仅兼容 `antlr4-python3-runtime==4.11.1`，
+> 故 `[web]` extra 中已显式钉死该版本，请勿随意升级。
+
 ## 🚀 快速上手
 
 ### 常微分方程
@@ -108,6 +139,10 @@ diffeq-toolkit/
 │   └── plotting.py      # 可视化辅助（自动中文字体）
 ├── examples/            # 6 个可独立运行的示例
 ├── tests/               # pytest 单元测试
+├── web/                 # 网页公式求解界面（LaTeX → Python 自动运算）
+│   ├── app.py           # 标准库 HTTP 服务 + sympy 解析 + diffeq 求解
+│   ├── templates/       # 暗色主题前端页面（MathJax 实时预览）
+│   └── static/          # CSS / JS
 ├── conftest.py          # 强制 matplotlib Agg 后端，保证无头/CI 环境测试稳定
 ├── docs/images/         # 示例生成的图片（README 画廊）
 ├── pyproject.toml
