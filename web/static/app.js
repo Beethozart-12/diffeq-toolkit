@@ -2,133 +2,231 @@
 (function () {
   "use strict";
 
-  // ---- 面板切换 ----
-  const tabs = document.querySelectorAll(".tab");
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      tabs.forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-      const name = tab.dataset.tab;
-      document.getElementById("panel-ode").classList.toggle("hidden", name !== "ode");
-      document.getElementById("panel-eval").classList.toggle("hidden", name !== "eval");
+  const $ = (id) => document.getElementById(id);
+
+  // ------------------------------------------------------------------ //
+  // 面板切换（支持点击与左右方向键，含 ARIA 状态同步）
+  // ------------------------------------------------------------------ //
+  const tabs = Array.from(document.querySelectorAll(".tab"));
+  const panels = { ode: $("panel-ode"), eval: $("panel-eval") };
+
+  function activateTab(name, focus) {
+    tabs.forEach((t) => {
+      const on = t.dataset.tab === name;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      if (on && focus) t.focus();
+    });
+    Object.keys(panels).forEach((k) => panels[k].classList.toggle("hidden", k !== name));
+  }
+
+  tabs.forEach((t, i) => {
+    t.addEventListener("click", () => activateTab(t.dataset.tab, false));
+    t.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+      activateTab(tabs[next].dataset.tab, true);
     });
   });
 
-  // ---- MathJax 预览 ----
-  function refreshPreview(elm) {
-    const txt = elm.value.trim();
-    const prev = document.getElementById(elm.dataset.preview);
-    prev.textContent = txt ? "$ " + txt + " $" : "";
-    if (window.MathJax && window.MathJax.typesetPromise) {
-      window.MathJax.typesetPromise([prev]).catch(() => {});
-    }
+  // ------------------------------------------------------------------ //
+  // MathJax 预览
+  // ------------------------------------------------------------------ //
+  // MathJax 是 async 加载的，可能尚未就绪；轮询至多 10s，就绪后排版当前内容。
+  function typeset(el) {
+    const attempt = () =>
+      !!(window.MathJax && window.MathJax.typesetPromise) &&
+      (window.MathJax.typesetPromise([el]).catch(() => {}), true);
+    if (attempt()) return;
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      if (attempt() || Date.now() - t0 > 10000) clearInterval(timer);
+    }, 150);
   }
-  const odeLatex = document.getElementById("ode-latex");
-  const evalLatex = document.getElementById("eval-latex");
+
+  function refreshPreview(elm) {
+    const prev = $(elm.dataset.preview);
+    if (!prev) return;
+    const txt = elm.value.trim();
+    prev.textContent = txt ? "$ " + txt + " $" : "";
+    typeset(prev);
+  }
+
+  // 输入防抖：连续打字时 120ms 内不重复排版，降低 MathJax 负担。
+  function debounce(fn, ms) {
+    let timer = null;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), ms);
+    };
+  }
+
+  const odeLatex = $("ode-latex");
+  const evalLatex = $("eval-latex");
   odeLatex.dataset.preview = "ode-preview";
   evalLatex.dataset.preview = "eval-preview";
-  odeLatex.addEventListener("input", () => refreshPreview(odeLatex));
-  evalLatex.addEventListener("input", () => refreshPreview(evalLatex));
+  odeLatex.addEventListener("input", debounce(() => refreshPreview(odeLatex), 120));
+  evalLatex.addEventListener("input", debounce(() => refreshPreview(evalLatex), 120));
 
-  // ---- 渲染结果 ----
-  function renderResult(container, data) {
-    container.innerHTML = "";
-    if (!data.ok) {
-      const d = document.createElement("div");
-      d.className = "error";
-      d.textContent = "出错了：" + data.error;
-      container.appendChild(d);
-      return;
-    }
-    const src = document.createElement("div");
-    src.className = "python-src";
-    src.textContent = "Python 读得懂的形式：\n" + data.python_src;
-    container.appendChild(src);
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    if (data.mode === "ode") {
-      meta.textContent = `自变量 ${data.indep}，因变量 ${data.dep}，共 ${data.n_points} 个解点（下方抽稀显示）。`;
-    } else {
-      meta.textContent = `自变量 ${data.var}。`;
-    }
-    container.appendChild(meta);
-
-    if (Array.isArray(data.x) && Array.isArray(data.y)) {
-      const n = Math.min(data.x.length, 12);
-      const table = document.createElement("table");
-      let head = "<tr>";
-      for (let i = 0; i < n; i++) head += "<th>" + fmt(data.x[i]) + "</th>";
-      head += "</tr>";
-      let body = "<tr>";
-      for (let i = 0; i < n; i++) body += "<td>" + fmt(data.y[i]) + "</td>";
-      body += "</tr>";
-      table.innerHTML = head + body;
-      container.appendChild(table);
-    }
-
-    if (data.plot) {
-      const img = document.createElement("img");
-      img.src = data.plot;
-      container.appendChild(img);
-    }
-  }
-
+  // ------------------------------------------------------------------ //
+  // 结果渲染（全部走 textContent / DOM API，杜绝注入；NaN 单独显示）
+  // ------------------------------------------------------------------ //
   function fmt(v) {
-    if (typeof v !== "number") return v;
+    if (typeof v !== "number") return String(v);
+    if (Number.isNaN(v)) return "NaN";
     if (!isFinite(v)) return v > 0 ? "∞" : "-∞";
     return v.toFixed(4);
   }
 
-  // ---- 调用 API ----
-  async function postJSON(url, payload) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    return res.json();
+  function el(tag, cls, text) {
+    const d = document.createElement(tag);
+    if (cls) d.className = cls;
+    if (text !== undefined) d.textContent = text;
+    return d;
   }
 
-  const odeRun = document.getElementById("ode-run");
-  odeRun.addEventListener("click", async () => {
-    odeRun.disabled = true;
+  // 采样点表格：第一列为行标签（如 t / y），避免表头表体误读。
+  function buildSampleTable(xs, ys, xName, yName) {
+    const n = Math.min(xs.length, ys.length, 12);
+    const table = document.createElement("table");
+    const mkRow = (label, vals) => {
+      const tr = document.createElement("tr");
+      tr.appendChild(el("th", "rowlabel", label));
+      for (let i = 0; i < n; i++) tr.appendChild(el("td", "", fmt(vals[i])));
+      return tr;
+    };
+    table.appendChild(mkRow(xName, xs));
+    table.appendChild(mkRow(yName, ys));
+    return table;
+  }
+
+  function renderResult(container, data) {
+    container.replaceChildren();
+    if (!data.ok) {
+      container.appendChild(el("div", "error", "出错了：" + (data.error || "未知错误")));
+      return;
+    }
+    container.appendChild(
+      el("div", "python-src", "Python 读得懂的形式：\n" + data.python_src)
+    );
+
+    if (data.mode === "ode") {
+      container.appendChild(
+        el("div", "meta", `自变量 ${data.indep}，因变量 ${data.dep}，共 ${data.n_points} 个解点（下方抽稀显示）。`)
+      );
+      if (Array.isArray(data.t) && Array.isArray(data.y)) {
+        container.appendChild(buildSampleTable(data.t, data.y, data.indep, data.dep));
+      }
+    } else {
+      container.appendChild(el("div", "meta", `自变量 ${data.var}。`));
+      if (Array.isArray(data.x) && Array.isArray(data.y)) {
+        container.appendChild(buildSampleTable(data.x, data.y, data.var, "f(" + data.var + ")"));
+      }
+    }
+
+    // plot 仅接受 data:image/ 前缀，防止异常 src。
+    if (typeof data.plot === "string" && data.plot.startsWith("data:image/")) {
+      const img = document.createElement("img");
+      img.src = data.plot;
+      img.alt = "函数图像";
+      container.appendChild(img);
+    }
+  }
+
+  // ------------------------------------------------------------------ //
+  // API 调用（统一入口：加载态 / 错误处理 / 状态提示）
+  // ------------------------------------------------------------------ //
+  async function postJSON(url, payload) {
+    let res;
     try {
-      const data = await postJSON("/api/solve", {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      throw new Error("网络连接失败，请确认服务已启动");
+    }
+    if (!res.ok) throw new Error("服务返回 HTTP " + res.status);
+    try {
+      return await res.json();
+    } catch (e) {
+      throw new Error("服务返回了无法解析的数据");
+    }
+  }
+
+  async function run({ btn, status, result, url, payload, busyText, done }) {
+    btn.disabled = true;
+    status.textContent = busyText;
+    result.replaceChildren();
+    try {
+      const data = await postJSON(url, payload);
+      renderResult(result, data);
+      status.textContent = data.ok ? done : "";
+    } catch (e) {
+      result.replaceChildren(el("div", "error", "请求失败：" + e.message));
+      status.textContent = "";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  const odeRun = $("ode-run");
+  const odeStatus = $("ode-status");
+  const odeResult = $("ode-result");
+
+  function submitOde() {
+    run({
+      btn: odeRun,
+      status: odeStatus,
+      result: odeResult,
+      url: "/api/solve",
+      payload: {
         latex: odeLatex.value,
-        y0: document.getElementById("ode-y0").value,
-        t0: document.getElementById("ode-t0").value,
-        tf: document.getElementById("ode-tf").value,
-      });
-      renderResult(document.getElementById("ode-result"), data);
-    } catch (e) {
-      document.getElementById("ode-result").innerHTML =
-        '<div class="error">请求失败：' + e + "</div>";
-    } finally {
-      odeRun.disabled = false;
-    }
-  });
+        y0: $("ode-y0").value,
+        t0: $("ode-t0").value,
+        tf: $("ode-tf").value,
+      },
+      busyText: "求解中…",
+      done: "完成",
+    });
+  }
+  odeRun.addEventListener("click", submitOde);
 
-  const evalRun = document.getElementById("eval-run");
-  evalRun.addEventListener("click", async () => {
-    evalRun.disabled = true;
-    try {
-      const data = await postJSON("/api/eval", {
+  const evalRun = $("eval-run");
+  const evalStatus = $("eval-status");
+  const evalResult = $("eval-result");
+
+  function submitEval() {
+    run({
+      btn: evalRun,
+      status: evalStatus,
+      result: evalResult,
+      url: "/api/eval",
+      payload: {
         latex: evalLatex.value,
-        var: document.getElementById("eval-var").value,
-        a: document.getElementById("eval-a").value,
-        b: document.getElementById("eval-b").value,
-      });
-      renderResult(document.getElementById("eval-result"), data);
-    } catch (e) {
-      document.getElementById("eval-result").innerHTML =
-        '<div class="error">请求失败：' + e + "</div>";
-    } finally {
-      evalRun.disabled = false;
-    }
+        var: $("eval-var").value,
+        a: $("eval-a").value,
+        b: $("eval-b").value,
+      },
+      busyText: "计算中…",
+      done: "完成",
+    });
+  }
+  evalRun.addEventListener("click", submitEval);
+
+  // Ctrl/Cmd + Enter 快捷提交
+  [odeLatex, evalLatex].forEach((ta, idx) => {
+    ta.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        (idx === 0 ? submitOde : submitEval)();
+      }
+    });
   });
 
-  // 初始化预览
+  // 初始化预览（MathJax 未就绪时由 typeset 内部轮询补齐）
   refreshPreview(odeLatex);
   refreshPreview(evalLatex);
 })();

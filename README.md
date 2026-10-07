@@ -77,6 +77,10 @@ python web/app.py --port 8000 --host 127.0.0.1
 
 然后在浏览器打开 <http://127.0.0.1:8000/> 即可。
 
+**前端特性**：暗色主题、MathJax LaTeX 实时预览（jsdelivr 失败自动回退 cdnjs）、
+`Ctrl+Enter` 快捷提交、计算中状态提示、采样点表格带行列标签、窄屏自适应、
+全量 `textContent` 渲染防注入。
+
 > 说明：解析链路为 `sympy.parsing.latex.parse_latex`（LaTeX → sympy 表达式）
 > → `sympy.lambdify(..., modules="numpy")`（sympy 表达式 → 数值函数）。
 > 因 sympy 1.12+ 的 LaTeX 解析器仅兼容 `antlr4-python3-runtime==4.11.1`，

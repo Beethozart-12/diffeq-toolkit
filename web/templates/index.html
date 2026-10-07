@@ -5,14 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>diffeq-toolkit · LaTeX 公式求解</title>
   <link rel="stylesheet" href="/static/style.css" />
-  <!-- MathJax 用于 LaTeX 实时预览 -->
+  <!-- MathJax 用于 LaTeX 实时预览；加载失败时自动回退到 cdnjs -->
   <script>
+    // typeset:false —— 不自动排版整页，由 app.js 对预览元素手动 typeset，避免重复扫描。
+    // 注意：加载的是 CHTML 组件，因此只配置 chtml，不要配置 svg.fontCache（两者不匹配）。
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\(', '\\)']] },
-      svg: { fontCache: 'global' }
+      chtml: { scale: 1.05 },
+      startup: { typeset: false }
     };
+    function __loadMathJaxFallback() {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.js';
+      s.async = true;
+      document.head.appendChild(s);
+    }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async
+          onerror="__loadMathJaxFallback()"></script>
 </head>
 <body>
   <header class="topbar">
@@ -21,18 +31,20 @@
   </header>
 
   <main>
-    <div class="tabs">
-      <button class="tab active" data-tab="ode">常微分方程（ODE）</button>
-      <button class="tab" data-tab="eval">表达式求值 / 绘图</button>
+    <div class="tabs" role="tablist" aria-label="求解模式">
+      <button class="tab active" role="tab" aria-selected="true" aria-controls="panel-ode"
+              id="tab-ode" data-tab="ode">常微分方程（ODE）</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="panel-eval"
+              id="tab-eval" data-tab="eval">表达式求值 / 绘图</button>
     </div>
 
     <!-- ODE 面板 -->
-    <section id="panel-ode" class="panel">
+    <section id="panel-ode" class="panel" role="tabpanel" aria-labelledby="tab-ode">
       <label class="field">
         <span>微分方程（LaTeX）</span>
-        <textarea id="ode-latex" rows="2">\frac{dy}{dt} = -2y</textarea>
+        <textarea id="ode-latex" rows="2" spellcheck="false">\frac{dy}{dt} = -2y</textarea>
       </label>
-      <div class="preview" id="ode-preview">\( \frac{dy}{dt} = -2y \)</div>
+      <div class="preview" id="ode-preview" aria-hidden="true">\( \frac{dy}{dt} = -2y \)</div>
 
       <div class="row">
         <label class="field small"><span>初值 y₀</span><input id="ode-y0" type="number" value="1" step="any" /></label>
@@ -40,32 +52,40 @@
         <label class="field small"><span>t 终值</span><input id="ode-tf" type="number" value="2" step="any" /></label>
       </div>
 
-      <button id="ode-run" class="run">求解</button>
-      <div id="ode-result" class="result"></div>
+      <div class="actions">
+        <button id="ode-run" class="run" type="button">求解</button>
+        <span id="ode-status" class="status" role="status" aria-live="polite"></span>
+      </div>
+      <div id="ode-result" class="result" aria-live="polite"></div>
     </section>
 
     <!-- 表达式面板 -->
-    <section id="panel-eval" class="panel hidden">
+    <section id="panel-eval" class="panel hidden" role="tabpanel" aria-labelledby="tab-eval">
       <label class="field">
         <span>表达式（LaTeX）</span>
-        <textarea id="eval-latex" rows="2">\sin(x) + x^2</textarea>
+        <textarea id="eval-latex" rows="2" spellcheck="false">\sin(x) + x^2</textarea>
       </label>
-      <div class="preview" id="eval-preview">\( \sin(x) + x^2 \)</div>
+      <div class="preview" id="eval-preview" aria-hidden="true">\( \sin(x) + x^2 \)</div>
 
       <div class="row">
-        <label class="field small"><span>自变量</span><input id="eval-var" type="text" value="x" /></label>
+        <label class="field small"><span>自变量</span><input id="eval-var" type="text" value="x" spellcheck="false" /></label>
         <label class="field small"><span>区间 a</span><input id="eval-a" type="number" value="-5" step="any" /></label>
         <label class="field small"><span>区间 b</span><input id="eval-b" type="number" value="5" step="any" /></label>
       </div>
 
-      <button id="eval-run" class="run">计算</button>
-      <div id="eval-result" class="result"></div>
+      <div class="actions">
+        <button id="eval-run" class="run" type="button">计算</button>
+        <span id="eval-status" class="status" role="status" aria-live="polite"></span>
+      </div>
+      <div id="eval-result" class="result" aria-live="polite"></div>
     </section>
 
     <p class="hint">
       解析由 <code>sympy.parse_latex</code> 完成，再经 <code>sympy.lambdify</code> 生成 Python 函数，
       最后交给 <code>diffeq.ode.solve_ivp</code>（或 NumPy）计算。下方会显示「Python 读得懂的方式」。
+      在输入框按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 可直接提交。
     </p>
+    <noscript><p class="hint error-note">本页面需要启用 JavaScript 才能运行。</p></noscript>
   </main>
 
   <script src="/static/app.js"></script>
