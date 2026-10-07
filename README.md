@@ -29,6 +29,12 @@
 | 一维热传导 `u_t = α·u_xx` | Crank–Nicolson 隐式 | 无条件稳定，Thomas 算法 O(n) 求解 |
 | 一维波动 `u_tt = c²·u_xx` | 中心差分（蛙跳） | CFL 条件 `c·dt/dx ≤ 1`（自动检查并报错） |
 | 二维 Laplace `u_xx + u_yy = 0` | Gauss–Seidel 迭代 | 迭代至残差收敛，返回迭代次数 |
+| **n 维热传导** `u_t = α·Δu` | `solve_heat_nd`（FTCS 向量化） | `Σ r_i ≤ 1/2`（自动检查并报错） |
+| **n 维波动** `u_tt = c²·Δu` | `solve_wave_nd`（蛙跳向量化） | `c·dt·√(Σ 1/dx_i²) ≤ 1` |
+| **n 维 Laplace** `Δu = 0` | `solve_laplace_nd`（红黑 Gauss–Seidel / SOR） | 收敛判据 `tol`，`ω∈(0,2)` 可调 |
+
+`*_nd` 系列支持**任意空间维数**（1/2/3 维乃至更高）：网格 `u0` 形状 `(n1,…,nk)`，
+边界条件接受标量或同形状数组（Dirichlet），返回按时间/迭代均匀抽样的快照序列。
 
 ### 可视化（`diffeq.plotting`）
 
@@ -62,6 +68,10 @@ pip install -e ".[dev]"     # 开发模式（含 pytest）
   为 `lambda t, y: -2*y`，交给 `diffeq.ode.solve_ivp` 求解并画数值解曲线。
 - **表达式求值标签页**：输入任意 LaTeX 表达式（如 `\sin(x) + x^2` 或 `e^{-x^2}`），
   自动在指定区间上求值并绘图（`e` 会被识别为自然常数 Euler 数）。
+- **PDE 标签页**：可选方程类型（热传导 `u_t = α·Δu` / 波动 `u_tt = c²·Δu` /
+  Laplace `Δu = 0`）与**空间维数 1/2/3**（自变量数目），初值与边界条件均用 LaTeX
+  输入（关于 `x[, y[, z]]` 的表达式，`\pi` 自动识别为圆周率），调用 n 维求解器并
+  输出多时刻快照图（1D 折线、2D 热图、3D 中心切片）。
 
 ### 启动
 

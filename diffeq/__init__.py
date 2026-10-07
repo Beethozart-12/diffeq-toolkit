@@ -15,6 +15,9 @@ from .pde import (
     solve_heat_crank_nicolson,
     solve_wave,
     solve_laplace,
+    solve_heat_nd,
+    solve_wave_nd,
+    solve_laplace_nd,
 )
 from .diagnostics import endpoint_error, convergence_orders
 from . import plotting
@@ -32,6 +35,9 @@ __all__ = [
     "solve_heat_crank_nicolson",
     "solve_wave",
     "solve_laplace",
+    "solve_heat_nd",
+    "solve_wave_nd",
+    "solve_laplace_nd",
     "endpoint_error",
     "convergence_orders",
     "plotting",

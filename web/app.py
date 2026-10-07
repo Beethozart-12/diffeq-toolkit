@@ -43,6 +43,7 @@ import matplotlib
 matplotlib.use("Agg")  # 无头环境，必须早于 pyplot 导入
 import matplotlib.pyplot as plt
 from diffeq.ode import solve_ivp
+from diffeq.pde import solve_heat_nd, solve_wave_nd, solve_laplace_nd
 
 
 # --------------------------------------------------------------------------- #
@@ -57,6 +58,9 @@ def latex_to_python(latex: str):
     if not latex:
         raise ValueError("LaTeX 公式为空")
     expr = parse_latex(latex)
+    # sympy 的 LaTeX 解析器会把 \pi 解析成普通符号 Symbol('pi')，
+    # 统一替换为圆周率 sp.pi（否则 lambdify 后无法求值）。
+    expr = expr.subs(sp.Symbol("pi"), sp.pi)
     syms = {str(s) for s in expr.free_symbols}
     return expr, syms
 
@@ -234,6 +238,202 @@ def api_eval(payload: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# PDE 求解：n 维热传导 / 波动 / Laplace
+# --------------------------------------------------------------------------- #
+PDE_VAR_NAMES = {1: ["x"], 2: ["x", "y"], 3: ["x", "y", "z"]}
+PDE_GRID_CAPS = {1: 801, 2: 301, 3: 81}          # 每维网格点数上限（控内存）
+PDE_STEP_CAPS = {1: 20000, 2: 3000, 3: 800}      # 演化步数上限（控耗时）
+
+
+def _pde_num(payload, key, default, lo=None, hi=None, what=""):
+    try:
+        v = float(payload.get(key, default))
+    except (TypeError, ValueError):
+        raise ValueError(f"参数 {key} 不是数字")
+    if lo is not None and v < lo:
+        raise ValueError(f"参数 {what or key} 必须 ≥ {lo}")
+    if hi is not None and v > hi:
+        raise ValueError(f"参数 {what or key} 必须 ≤ {hi}")
+    return v
+
+
+def _latex_field(latex, var_names, grids, what):
+    """把 LaTeX 表达式解析成给定网格上的实数场（广播标量）。"""
+    expr, syms = latex_to_python(latex)
+    unknown = sorted(syms - set(var_names))
+    if unknown:
+        raise ValueError(f"{what}中出现了未知符号 {unknown}（可用变量：{var_names}）")
+    if "e" not in var_names:
+        expr = expr.subs(sp.Symbol("e"), sp.E)
+    g = sp.lambdify(var_names, expr, modules="numpy")
+    arr = np.asarray(g(*grids), dtype=float)
+    if arr.shape != grids[0].shape:
+        arr = np.broadcast_to(arr, grids[0].shape).astype(float)
+    return arr
+
+
+def _pde_boundary_mask(shape):
+    """返回标记边界面（含棱、角）的布尔数组。"""
+    mask = np.zeros(shape, dtype=bool)
+    for a in range(len(shape)):
+        for face in (0, -1):
+            sl = [slice(None)] * len(shape)
+            sl[a] = face
+            mask[tuple(sl)] = True
+    return mask
+
+
+def _pde_plot(snaps, labels, dims, L, var_names, ptype):
+    """把快照序列画成一张图：1D 折线，2D/3D 热图子图网格。"""
+    m = len(snaps)
+    cmap = plt.get_cmap("viridis")
+    if dims == 1:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        x = np.linspace(0.0, L, snaps.shape[1])
+        for i in range(m):
+            ax.plot(x, snaps[i], color=cmap(i / max(m - 1, 1)), lw=1.8,
+                    label=labels[i])
+        ax.set_xlabel(var_names[0])
+        ax.set_ylabel("u")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+    else:
+        ncol = min(3, m)
+        nrow = (m + ncol - 1) // ncol
+        fig, axes = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.4 * nrow),
+                                 squeeze=False)
+        for i in range(m):
+            ax = axes[i // ncol][i % ncol]
+            field = snaps[i] if dims == 2 else snaps[i][snaps.shape[1] // 2]
+            im = ax.imshow(field.T, origin="lower", extent=[0, L, 0, L],
+                           cmap="viridis", aspect="auto")
+            ax.set_title(labels[i], fontsize=9)
+            fig.colorbar(im, ax=ax, fraction=0.046)
+        for j in range(m, nrow * ncol):
+            axes[j // ncol][j % ncol].axis("off")
+        fig.suptitle(f"{'z = L/2 截面 · ' if dims == 3 else ''}"
+                     f"{var_names[-1]} 方向中心切片" if dims == 3 else "", fontsize=9)
+    fig.tight_layout()
+    return fig_to_base64(fig)
+
+
+def api_pde(payload: dict) -> dict:
+    """PDE 求解：类型/维数/LaTeX 初值与边界 -> n 维求解器 -> 快照图。"""
+    ptype = payload.get("type")
+    if ptype not in ("heat", "wave", "laplace"):
+        return {"ok": False, "error": "未知方程类型（heat / wave / laplace）"}
+    try:
+        dims = int(payload.get("dims", 2))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "维数必须是整数"}
+    if dims not in (1, 2, 3):
+        return {"ok": False, "error": "空间维数仅支持 1 / 2 / 3"}
+    if ptype == "laplace" and dims < 2:
+        return {"ok": False, "error": "Laplace 方程至少需要 2 个空间维数"}
+
+    var_names = PDE_VAR_NAMES[dims]
+    try:
+        L = _pde_num(payload, "L", 1.0, lo=1e-9, what="区域边长 L")
+        n = int(_pde_num(payload, "n", 61, lo=5, what="每维网格点数"))
+        cap_n = PDE_GRID_CAPS[dims]
+        if n > cap_n:
+            return {"ok": False,
+                    "error": f"{dims} 维网格每维最多 {cap_n} 点（内存限制），当前 {n}"}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    grid_desc = {1: f"{n} 点", 2: f"{n}×{n}", 3: f"{n}×{n}×{n}"}[dims]
+
+    axes = [np.linspace(0.0, L, n)] * dims
+    grids = np.meshgrid(*axes, indexing="ij")
+    dx = L / (n - 1)
+
+    try:
+        u0 = _latex_field(payload.get("latex", "0"), var_names, grids, "初值/初始猜测")
+        bnd = _latex_field(payload.get("bc", "0") or "0", var_names, grids, "边界条件")
+    except Exception as e:
+        return {"ok": False, "error": f"公式解析失败：{e}"}
+
+    try:
+        if ptype == "heat":
+            alpha = _pde_num(payload, "coeff", 1.0, lo=1e-12, what="α 热扩散系数")
+            dt = _pde_num(payload, "dt", 0.25 * dx * dx / dims, lo=1e-12)
+            steps = int(_pde_num(payload, "steps", 500, lo=0))
+            if steps > PDE_STEP_CAPS[dims]:
+                return {"ok": False,
+                        "error": f"{dims} 维演化步数最多 {PDE_STEP_CAPS[dims]}，当前 {steps}"}
+            times, snaps = solve_heat_nd(u0, alpha, dx, dt, steps,
+                                         boundary=bnd, n_snapshots=6)
+            r_sum = alpha * dt * dims / dx**2
+            labels = [f"t = {t:.4g}" for t in times]
+            meta = (f"{dims} 维热传导 · 网格 {grid_desc}"
+                    + f" · dx={dx:.4g} · dt={dt:.4g} · {steps} 步 · "
+                      f"Σ r_i = {r_sum:.3g}（≤ 0.5）")
+            scheme = "FTCS：u^{n+1} = u^n + dt·α·Δu^n"
+            python_src = "u0 = " + sp.printing.lambdarepr.lambdarepr(
+                _latex_expr(payload.get("latex", "0"), var_names))
+        elif ptype == "wave":
+            c = _pde_num(payload, "coeff", 1.0, lo=1e-12, what="c 波速")
+            dt = _pde_num(payload, "dt", 0.8 / (c * np.sqrt(dims) / dx), lo=1e-12)
+            steps = int(_pde_num(payload, "steps", 300, lo=0))
+            if steps > PDE_STEP_CAPS[dims]:
+                return {"ok": False,
+                        "error": f"{dims} 维演化步数最多 {PDE_STEP_CAPS[dims]}，当前 {steps}"}
+            times, snaps = solve_wave_nd(u0, 0.0, c, dx, dt, steps,
+                                         boundary=bnd, n_snapshots=6)
+            cfl = c * dt * np.sqrt(dims) / dx
+            labels = [f"t = {t:.4g}" for t in times]
+            meta = (f"{dims} 维波动 · 网格 {grid_desc}"
+                    + f" · dx={dx:.4g} · dt={dt:.4g} · {steps} 步 · "
+                      f"CFL = {cfl:.3g}（≤ 1）")
+            scheme = "蛙跳：u^{n+1} = 2u^n − u^{n−1} + (c·dt)²·Δu^n"
+            python_src = "u0 = " + sp.printing.lambdarepr.lambdarepr(
+                _latex_expr(payload.get("latex", "0"), var_names))
+        else:  # laplace
+            tol = _pde_num(payload, "tol", 1e-6, lo=1e-12)
+            max_iter = int(_pde_num(payload, "maxiter", 20000, lo=1, hi=200000))
+            mask = _pde_boundary_mask(u0.shape)
+            u_guess = np.where(mask, bnd, u0)
+            snaps, iters = solve_laplace_nd(u_guess, dx=dx, tol=tol,
+                                            max_iter=max_iter, n_snapshots=6)
+            labels = [f"iter = {k}" for k in iters]
+            meta = (f"{dims} 维 Laplace · 网格 {grid_desc}"
+                    + f" · tol={tol:.3g} · 收敛 {int(iters[-1])} 轮")
+            scheme = "红黑 Gauss–Seidel：u ← 邻居加权平均（SOR ω 可调）"
+            python_src = "u0 = " + sp.printing.lambdarepr.lambdarepr(
+                _latex_expr(payload.get("latex", "0"), var_names))
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:
+        return {"ok": False, "error": f"求解失败：{e}"}
+
+    try:
+        plot = _pde_plot(np.asarray(snaps), labels, dims, L, var_names, ptype)
+    except Exception as e:
+        return {"ok": False, "error": f"绘图失败：{e}"}
+
+    return {
+        "ok": True,
+        "mode": "pde",
+        "pde_type": ptype,
+        "dims": dims,
+        "var_names": var_names,
+        "python_src": python_src,
+        "scheme": scheme,
+        "meta": meta,
+        "n_snapshots": int(np.asarray(snaps).shape[0]),
+        "plot": plot,
+    }
+
+
+def _latex_expr(latex, var_names):
+    """仅供 python_src 展示：LaTeX -> sympy 表达式（e 视为 Euler 数）。"""
+    expr, _ = latex_to_python(latex or "0")
+    if "e" not in var_names:
+        expr = expr.subs(sp.Symbol("e"), sp.E)
+    return expr
+
+
+# --------------------------------------------------------------------------- #
 # HTTP 服务
 # --------------------------------------------------------------------------- #
 WEB_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -283,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path not in ("/api/solve", "/api/eval"):
+        if parsed.path not in ("/api/solve", "/api/eval", "/api/pde"):
             self.send_error(404, "Not Found")
             return
         try:
@@ -296,8 +496,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/solve":
             self._send_json(api_solve(payload))
-        else:
+        elif parsed.path == "/api/eval":
             self._send_json(api_eval(payload))
+        else:
+            self._send_json(api_pde(payload))
 
     def log_message(self, fmt, *args):  # 静默默认日志
         pass

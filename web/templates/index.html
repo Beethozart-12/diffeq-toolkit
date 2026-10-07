@@ -36,6 +36,8 @@
               id="tab-ode" data-tab="ode">常微分方程（ODE）</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="panel-eval"
               id="tab-eval" data-tab="eval">表达式求值 / 绘图</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="panel-pde"
+              id="tab-pde" data-tab="pde">偏微分方程（PDE）</button>
     </div>
 
     <!-- ODE 面板 -->
@@ -80,10 +82,68 @@
       <div id="eval-result" class="result" aria-live="polite"></div>
     </section>
 
+    <!-- PDE 面板 -->
+    <section id="panel-pde" class="panel hidden" role="tabpanel" aria-labelledby="tab-pde">
+      <div class="row">
+        <label class="field small"><span>方程类型</span>
+          <select id="pde-type">
+            <option value="heat" selected>热传导 u_t = α·Δu</option>
+            <option value="wave">波动 u_tt = c²·Δu</option>
+            <option value="laplace">Laplace Δu = 0</option>
+          </select>
+        </label>
+        <label class="field small"><span>空间维数（自变量数目）</span>
+          <select id="pde-dims">
+            <option value="1">1（x）</option>
+            <option value="2" selected>2（x, y）</option>
+            <option value="3">3（x, y, z）</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="field">
+        <span id="pde-ic-label">初值（LaTeX，关于 x, y）</span>
+        <textarea id="pde-latex" rows="2" spellcheck="false">\sin(\pi x)\sin(\pi y)</textarea>
+      </label>
+      <div class="preview" id="pde-preview" aria-hidden="true"></div>
+
+      <label class="field">
+        <span>边界条件（LaTeX，常数或关于空间变量的表达式，Dirichlet）</span>
+        <textarea id="pde-bc" rows="1" spellcheck="false">0</textarea>
+      </label>
+
+      <div class="row">
+        <label class="field small pde-heatwave"><span id="pde-coeff-label">α 热扩散系数</span>
+          <input id="pde-coeff" type="number" value="1" step="any" /></label>
+        <label class="field small"><span>区域边长 L（各维相同）</span>
+          <input id="pde-L" type="number" value="1" step="any" /></label>
+        <label class="field small"><span>每维网格点数</span>
+          <input id="pde-n" type="number" value="41" min="5" /></label>
+      </div>
+      <div class="row pde-heatwave">
+        <label class="field small"><span>时间步长 dt</span>
+          <input id="pde-dt" type="number" value="0.0001" step="any" /></label>
+        <label class="field small"><span>演化步数</span>
+          <input id="pde-steps" type="number" value="300" min="0" /></label>
+      </div>
+      <div class="row pde-laplace hidden">
+        <label class="field small"><span>收敛容差 tol</span>
+          <input id="pde-tol" type="number" value="0.000001" step="any" /></label>
+        <label class="field small"><span>最大迭代轮数</span>
+          <input id="pde-maxiter" type="number" value="20000" min="1" /></label>
+      </div>
+
+      <div class="actions">
+        <button id="pde-run" class="run" type="button">求解</button>
+        <span id="pde-status" class="status" role="status" aria-live="polite"></span>
+      </div>
+      <div id="pde-result" class="result" aria-live="polite"></div>
+    </section>
+
     <p class="hint">
       解析由 <code>sympy.parse_latex</code> 完成，再经 <code>sympy.lambdify</code> 生成 Python 函数，
-      最后交给 <code>diffeq.ode.solve_ivp</code>（或 NumPy）计算。下方会显示「Python 读得懂的方式」。
-      在输入框按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 可直接提交。
+      最后交给 <code>diffeq.ode.solve_ivp</code> / n 维 PDE 求解器（或 NumPy）计算。
+      下方会显示「Python 读得懂的方式」。在输入框按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 可直接提交。
     </p>
     <noscript><p class="hint error-note">本页面需要启用 JavaScript 才能运行。</p></noscript>
   </main>

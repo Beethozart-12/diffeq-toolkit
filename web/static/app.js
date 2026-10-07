@@ -8,7 +8,7 @@
   // 面板切换（支持点击与左右方向键，含 ARIA 状态同步）
   // ------------------------------------------------------------------ //
   const tabs = Array.from(document.querySelectorAll(".tab"));
-  const panels = { ode: $("panel-ode"), eval: $("panel-eval") };
+  const panels = { ode: $("panel-ode"), eval: $("panel-eval"), pde: $("panel-pde") };
 
   function activateTab(name, focus) {
     tabs.forEach((t) => {
@@ -118,6 +118,8 @@
       if (Array.isArray(data.t) && Array.isArray(data.y)) {
         container.appendChild(buildSampleTable(data.t, data.y, data.indep, data.dep));
       }
+    } else if (data.mode === "pde") {
+      container.appendChild(el("div", "meta", data.scheme + "　|　" + data.meta));
     } else {
       container.appendChild(el("div", "meta", `自变量 ${data.var}。`));
       if (Array.isArray(data.x) && Array.isArray(data.y)) {
@@ -216,17 +218,91 @@
   }
   evalRun.addEventListener("click", submitEval);
 
+  // ------------------------------------------------------------------ //
+  // PDE 面板：类型/维数联动 + 求解
+  // ------------------------------------------------------------------ //
+  const pdeType = $("pde-type");
+  const pdeDims = $("pde-dims");
+  const pdeLatex = $("pde-latex");
+  const pdeBc = $("pde-bc");
+  const pdeIcLabel = $("pde-ic-label");
+  const pdeCoeffLabel = $("pde-coeff-label");
+  const pdePreview = $("pde-preview");
+
+  // 各类型/维数下的初值占位（切到 laplace 时是「初始猜测」）
+  const PDE_PLACEHOLDERS = {
+    heat: ["\\sin(\\pi x)", "\\sin(\\pi x)\\sin(\\pi y)",
+           "\\sin(\\pi x)\\sin(\\pi y)\\sin(\\pi z)"],
+    wave: ["\\sin(\\pi x)", "\\sin(\\pi x)\\sin(\\pi y)",
+           "\\sin(\\pi x)\\sin(\\pi y)\\sin(\\pi z)"],
+    laplace: ["0", "0", "0"],
+  };
+  const PDE_DIM_NAMES = ["x", "x, y", "x, y, z"];
+
+  function syncPdeForm() {
+    const type = pdeType.value;
+    const dims = Number(pdeDims.value);
+    // Laplace 至少 2 维：禁用 1 维选项，必要时自动切到 2 维
+    pdeDims.querySelector('option[value="1"]').disabled = type === "laplace";
+    if (type === "laplace" && dims === 1) {
+      pdeDims.value = "2";
+    }
+    const d = Number(pdeDims.value);
+    const isLaplace = type === "laplace";
+    document.querySelectorAll(".pde-heatwave").forEach((n) => n.classList.toggle("hidden", isLaplace));
+    document.querySelectorAll(".pde-laplace").forEach((n) => n.classList.toggle("hidden", !isLaplace));
+    pdeIcLabel.textContent = (isLaplace ? "初始猜测（LaTeX，关于 " : "初值（LaTeX，关于 ")
+      + PDE_DIM_NAMES[d - 1] + "）";
+    pdeCoeffLabel.textContent = type === "wave" ? "c 波速" : "α 热扩散系数";
+    pdeLatex.placeholder = PDE_PLACEHOLDERS[type][d - 1];
+    refreshPreview(pdeLatex);
+  }
+  pdeType.addEventListener("change", syncPdeForm);
+  pdeDims.addEventListener("change", syncPdeForm);
+
+  const pdeRun = $("pde-run");
+  const pdeStatus = $("pde-status");
+  const pdeResult = $("pde-result");
+
+  function submitPde() {
+    run({
+      btn: pdeRun,
+      status: pdeStatus,
+      result: pdeResult,
+      url: "/api/pde",
+      payload: {
+        type: pdeType.value,
+        dims: Number(pdeDims.value),
+        latex: pdeLatex.value,
+        bc: pdeBc.value,
+        coeff: $("pde-coeff").value,
+        L: $("pde-L").value,
+        n: $("pde-n").value,
+        dt: $("pde-dt").value,
+        steps: $("pde-steps").value,
+        tol: $("pde-tol").value,
+        maxiter: $("pde-maxiter").value,
+      },
+      busyText: "求解中（PDE 计算量较大，请稍候）…",
+      done: "完成",
+    });
+  }
+  pdeRun.addEventListener("click", submitPde);
+
   // Ctrl/Cmd + Enter 快捷提交
-  [odeLatex, evalLatex].forEach((ta, idx) => {
+  const submitByIndex = [submitOde, submitEval, submitPde];
+  [odeLatex, evalLatex, pdeLatex].forEach((ta, idx) => {
     ta.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
-        (idx === 0 ? submitOde : submitEval)();
+        submitByIndex[idx]();
       }
     });
   });
 
   // 初始化预览（MathJax 未就绪时由 typeset 内部轮询补齐）
+  pdeLatex.dataset.preview = "pde-preview";
+  syncPdeForm();
   refreshPreview(odeLatex);
   refreshPreview(evalLatex);
 })();
