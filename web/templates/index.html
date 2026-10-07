@@ -109,13 +109,13 @@
       </div>
 
       <label class="field">
-        <span id="pde-ic-label">初值（LaTeX，关于 x, y）</span>
+        <span id="pde-ic-label">初始猜测（LaTeX · 只填表达式，如 4x^2+4y^2，不要带 z(x,y)= 前缀）</span>
         <textarea id="pde-latex" rows="2" spellcheck="false">\sin(\pi x)\sin(\pi y)</textarea>
       </label>
       <div class="preview" id="pde-preview" aria-hidden="true"></div>
 
       <label class="field">
-        <span>边界条件（LaTeX，常数或关于空间变量的表达式，Dirichlet）</span>
+        <span>边界条件（LaTeX · 一个逐点表达式，四条边共用，如 0；不要写 z(0,y)=… 描述）</span>
         <textarea id="pde-bc" rows="1" spellcheck="false">0</textarea>
       </label>
 

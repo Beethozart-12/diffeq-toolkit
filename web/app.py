@@ -259,8 +259,22 @@ def _pde_num(payload, key, default, lo=None, hi=None, what=""):
 
 
 def _latex_field(latex, var_names, grids, what):
-    """把 LaTeX 表达式解析成给定网格上的实数场（广播标量）。"""
-    expr, syms = latex_to_python(latex)
+    """把 LaTeX 表达式解析成给定网格上的实数场（广播标量）。
+
+    容错：形如 ``z(x,y)=4x^2`` 的「函数名=表达式」写法自动取等号右侧；
+    解析出 True/False 布尔值（典型的「整段边界描述」如
+    ``z(0,y)=z(1,y)=0,...``）时给出针对性提示。
+    """
+    raw = (latex or "").strip()
+    expr, syms = latex_to_python(raw)
+    if isinstance(expr, sp.Eq):
+        expr = expr.rhs
+        syms = {str(s) for s in expr.free_symbols}
+    elif isinstance(expr, sp.logic.boolalg.BooleanAtom) or expr is True or expr is False:
+        raise ValueError(
+            f"{what}看起来是一段完整的边界/方程描述（含多个等号），"
+            "请只填一个逐点表达式，例如 0 或 \\sin(\\pi x)\\sin(\\pi y)"
+        )
     unknown = sorted(syms - set(var_names))
     if unknown:
         if "nabla" in unknown or "Delta" in unknown:
@@ -302,8 +316,8 @@ def _has_laplacian(s):
     return bool(_RE_LAPLACIAN.search(s))
 
 
-def _parse_pde_equation(eq):
-    """从 LaTeX 方程识别类型与系数（支持 \nabla^2、\Delta、u_t、u_{tt} 记号）。
+def _parse_pde_equation(eq, var_names=None):
+    r"""从 LaTeX 方程识别类型与系数（支持 \nabla^2、\Delta、u_t、u_{tt} 记号）。
 
     返回 (ptype, coeff, info)：coeff 为数值时直接采用（heat=α，wave=c）；
     为 None 时（方程里写的是 \alpha、c 等符号）回退到系数输入框。
@@ -313,6 +327,8 @@ def _parse_pde_equation(eq):
     sympy 解析。
     """
     s = re.sub(r"\\left|\\right", "", eq.strip())
+    # 丢弃 ", 0<x<1, 0<y<1" 这类逗号后的定义域描述（区域大小由 L 输入框控制）
+    s = s.split(",")[0].strip()
     if not _has_laplacian(s):
         if _RE_BARE_NABLA.search(s):
             raise ValueError(
@@ -329,9 +345,21 @@ def _parse_pde_equation(eq):
     lap_side = lhs if _has_laplacian(lhs) else rhs
     other = rhs if lap_side is lhs else lhs
 
-    # 提取系数：去掉 Laplacian 算子与依变量 u 后解析剩余部分
+    # 依变量 = Laplacian 之后的那个单字母；与空间变量重名时给出明确指引
+    tail = re.split(_RE_LAPLACIAN, lap_side, maxsplit=1)[-1]
+    m = re.search(r"(?<![a-zA-Z\\])([a-zA-Z])(?![a-zA-Z])", tail)
+    dep = m.group(1) if m else None
+    if dep and var_names and dep in var_names:
+        raise ValueError(
+            f"方程的未知函数 {dep} 与空间变量 {dep} 重名："
+            f"请把「空间维数」改成不含 {dep} 的组合，或把未知函数改名（如 w）"
+        )
+
+    # 提取系数：去掉 Laplacian 算子与依变量后解析剩余部分
     coeff_raw = _RE_LAPLACIAN.sub("", lap_side)
-    coeff_raw = re.sub(r"(?<![a-zA-Z\\])u(?![a-zA-Z])", "", coeff_raw).strip() or "1"
+    letter = dep or "u"
+    coeff_raw = re.sub(rf"(?<![a-zA-Z\\]){letter}(?![a-zA-Z])", "", coeff_raw)
+    coeff_raw = coeff_raw.strip() or "1"
     expr, syms = latex_to_python(coeff_raw)
     coeff = float(expr) if not syms else None
 
@@ -405,6 +433,7 @@ def api_pde(payload: dict) -> dict:
         return {"ok": False, "error": "维数必须是整数"}
     if dims not in (1, 2, 3):
         return {"ok": False, "error": "空间维数仅支持 1 / 2 / 3"}
+    var_names = PDE_VAR_NAMES[dims]
 
     # 方程输入框（可选）：识别 ∇²/Δ 记号，自动覆盖类型与系数
     eq_raw = (payload.get("eq") or "").strip()
@@ -412,7 +441,7 @@ def api_pde(payload: dict) -> dict:
     eq_info = None
     if eq_raw:
         try:
-            ptype, eq_coeff, eq_info = _parse_pde_equation(eq_raw)
+            ptype, eq_coeff, eq_info = _parse_pde_equation(eq_raw, var_names)
         except ValueError as e:
             return {"ok": False, "error": f"方程识别失败：{e}"}
     else:
@@ -422,7 +451,6 @@ def api_pde(payload: dict) -> dict:
     if ptype == "laplace" and dims < 2:
         return {"ok": False, "error": "Laplace 方程至少需要 2 个空间维数"}
 
-    var_names = PDE_VAR_NAMES[dims]
     try:
         L = _pde_num(payload, "L", 1.0, lo=1e-9, what="区域边长 L")
         n = int(_pde_num(payload, "n", 61, lo=5, what="每维网格点数"))

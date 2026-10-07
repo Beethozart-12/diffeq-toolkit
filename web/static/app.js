@@ -252,8 +252,9 @@
     const isLaplace = type === "laplace";
     document.querySelectorAll(".pde-heatwave").forEach((n) => n.classList.toggle("hidden", isLaplace));
     document.querySelectorAll(".pde-laplace").forEach((n) => n.classList.toggle("hidden", !isLaplace));
-    pdeIcLabel.textContent = (isLaplace ? "初始猜测（LaTeX，关于 " : "初值（LaTeX，关于 ")
-      + PDE_DIM_NAMES[d - 1] + "）";
+    pdeIcLabel.textContent = (isLaplace ? "初始猜测（LaTeX · 关于 " : "初值（LaTeX · 关于 ")
+      + PDE_DIM_NAMES[d - 1]
+      + " · 只填表达式，不要带 f(x)= 前缀）";
     pdeCoeffLabel.textContent = type === "wave" ? "c 波速" : "α 热扩散系数";
     pdeLatex.placeholder = PDE_PLACEHOLDERS[type][d - 1];
     refreshPreview(pdeLatex);
